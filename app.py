@@ -64,7 +64,7 @@ st.markdown("""
 # Entraînement du modèle
 @st.cache_resource
 def train_model():
-    df = pd.read_csv('creditcard.csv', nrows=50000)
+    df = pd.read_csv('creditcard_sample.csv', nrows=50000)
     cols_order = ['Time'] + [f'V{i}' for i in range(1, 29)] + ['Amount']
     X = df[cols_order].copy()
     y = df['Class']
