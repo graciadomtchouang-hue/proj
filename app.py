@@ -2,11 +2,8 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, roc_curve, auc, f1_score
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 st.set_page_config(
     page_title="Détection de Fraude Bancaire",
@@ -17,7 +14,7 @@ st.set_page_config(
 @st.cache_resource
 def train_model():
     url = "https://raw.githubusercontent.com/graciadomtchouang-hue/proj/main/creditcard_sample.csv"
-    df = pd.read_csv(url)
+    df = pd.read_csv(url, nrows=50000)
     cols_order = ['Time'] + [f'V{i}' for i in range(1, 29)] + ['Amount']
     X = df[cols_order].copy()
     y = df['Class']
@@ -36,29 +33,17 @@ def train_model():
     idx = np.concatenate([legit_idx, oversampled])
     np.random.shuffle(idx)
 
-    X_bal = X_train.iloc[idx]
-    y_bal = y_train.iloc[idx]
-
-    # Arbre de décision
-    dt = DecisionTreeClassifier(max_depth=5, random_state=42, class_weight='balanced')
-    dt.fit(X_bal, y_bal)
-
-    # Random Forest
     rf = RandomForestClassifier(n_estimators=50, random_state=42,
                                  class_weight='balanced', n_jobs=-1)
-    rf.fit(X_bal, y_bal)
+    rf.fit(X_train.iloc[idx], y_train.iloc[idx])
+    return rf
 
-    return rf, dt, X_test, y_test, X
-
-# ============================================================
-# CHARGEMENT
-# ============================================================
 st.title("🔍 Détection de Fraude à la Carte de Crédit")
 st.markdown("Système intelligent de détection basé sur le Machine Learning.")
 st.markdown("---")
 
-with st.spinner("⏳ Chargement du modèle..."):
-    model_rf, model_dt, X_test_ref, y_test_ref, X_ref = train_model()
+with st.spinner("⏳ Chargement du modèle... (1-2 minutes)"):
+    model = train_model()
 
 st.success("✅ Modèle prêt !")
 st.markdown("---")
@@ -68,9 +53,6 @@ mode = st.sidebar.selectbox(
     ["🏠 Accueil", "📁 Analyse CSV", "✍️ Saisie manuelle"]
 )
 
-# ============================================================
-# PAGE ACCUEIL
-# ============================================================
 if mode == "🏠 Accueil":
     st.subheader("📊 Tableau de bord général")
     col1, col2, col3, col4 = st.columns(4)
@@ -99,22 +81,6 @@ if mode == "🏠 Accueil":
         st.pyplot(fig)
         plt.close()
 
-    st.markdown("---")
-    st.subheader("🔑 Importance des variables (Random Forest)")
-    fig, ax = plt.subplots(figsize=(12, 4))
-    feat_imp = pd.Series(model_rf.feature_importances_,
-                          index=X_ref.columns).sort_values(ascending=False)
-    feat_imp[:15].plot(kind='bar', ax=ax, color='#0f3460', edgecolor='black')
-    ax.set_title("Top 15 variables les plus importantes")
-    ax.set_ylabel("Importance")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
-
-# ============================================================
-# PAGE ANALYSE CSV
-# ============================================================
 elif mode == "📁 Analyse CSV":
     st.subheader("📁 Analyse de fichier CSV")
     st.markdown("Le fichier doit contenir : **Time, V1 à V28, Amount**")
@@ -123,7 +89,6 @@ elif mode == "📁 Analyse CSV":
 
     if uploaded_file is not None:
         df_upload = pd.read_csv(uploaded_file)
-        st.write("**Aperçu des données :**")
         st.dataframe(df_upload.head(5), use_container_width=True)
 
         required_cols = ['Time', 'Amount'] + [f'V{i}' for i in range(1, 29)]
@@ -133,14 +98,13 @@ elif mode == "📁 Analyse CSV":
             st.error(f"❌ Colonnes manquantes : {missing}")
         else:
             if st.button("🔎 Lancer l'analyse", type="primary"):
-                with st.spinner("Analyse en cours..."):
-                    cols_order = ['Time'] + [f'V{i}' for i in range(1, 29)] + ['Amount']
-                    X_upload = df_upload[cols_order].copy()
-                    X_upload['Amount'] = (X_upload['Amount'] - 88.35) / 250.12
-                    X_upload['Time'] = (X_upload['Time'] - 94813.0) / 47488.0
+                cols_order = ['Time'] + [f'V{i}' for i in range(1, 29)] + ['Amount']
+                X_upload = df_upload[cols_order].copy()
+                X_upload['Amount'] = (X_upload['Amount'] - 88.35) / 250.12
+                X_upload['Time'] = (X_upload['Time'] - 94813.0) / 47488.0
 
-                    predictions = model_rf.predict(X_upload)
-                    probas = model_rf.predict_proba(X_upload)[:, 1]
+                predictions = model.predict(X_upload)
+                probas = model.predict_proba(X_upload)[:, 1]
 
                 df_result = df_upload.copy()
                 df_result['Prédiction'] = ['⚠️ Fraude' if p == 1 else '✅ Légitime' for p in predictions]
@@ -148,121 +112,14 @@ elif mode == "📁 Analyse CSV":
 
                 nb_fraudes = int(sum(predictions))
                 nb_total = len(predictions)
-                nb_legit = nb_total - nb_fraudes
 
-                # Métriques
-                st.markdown("---")
-                st.subheader("📊 Résultats")
                 col1, col2, col3 = st.columns(3)
-                col1.metric("📦 Total analysé", nb_total)
-                col2.metric("⚠️ Fraudes détectées", nb_fraudes)
-                col3.metric("✅ Légitimes", nb_legit)
+                col1.metric("📦 Total", nb_total)
+                col2.metric("⚠️ Fraudes", nb_fraudes)
+                col3.metric("✅ Légitimes", nb_total - nb_fraudes)
 
-                st.markdown("---")
-
-                # Graphique 1 : Distribution des prédictions
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("📈 Distribution des prédictions")
-                    fig, ax = plt.subplots(figsize=(5, 3))
-                    ax.bar(['Légitimes', 'Fraudes'], [nb_legit, nb_fraudes],
-                           color=['#0f3460', '#e94560'], edgecolor='black')
-                    ax.set_title("Transactions détectées")
-                    ax.set_ylabel("Nombre")
-                    for i, v in enumerate([nb_legit, nb_fraudes]):
-                        ax.text(i, v + 0.5, str(v), ha='center', fontweight='bold')
-                    st.pyplot(fig)
-                    plt.close()
-
-                with col2:
-                    st.subheader("📊 Distribution des probabilités")
-                    fig, ax = plt.subplots(figsize=(5, 3))
-                    ax.hist(probas, bins=30, color='#0f3460', edgecolor='black')
-                    ax.axvline(0.5, color='#e94560', linestyle='--', label='Seuil 50%')
-                    ax.set_title("Probabilités de fraude")
-                    ax.set_xlabel("Probabilité")
-                    ax.set_ylabel("Nombre")
-                    ax.legend()
-                    st.pyplot(fig)
-                    plt.close()
-
-                st.markdown("---")
-
-                # Graphique 2 : Distribution du montant
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("💰 Distribution du montant")
-                    fig, ax = plt.subplots(figsize=(5, 3))
-                    ax.hist(df_upload[predictions == 0]['Amount'],
-                            bins=30, alpha=0.6, color='#0f3460', label='Légitime')
-                    ax.hist(df_upload[predictions == 1]['Amount'],
-                            bins=30, alpha=0.6, color='#e94560', label='Fraude')
-                    ax.set_title("Montant par classe prédite")
-                    ax.set_xlabel("Montant (€)")
-                    ax.set_ylabel("Fréquence")
-                    ax.legend()
-                    st.pyplot(fig)
-                    plt.close()
-
-                with col2:
-                    st.subheader("🔗 Corrélations avec la cible")
-                    fig, ax = plt.subplots(figsize=(5, 3))
-                    corr = df_upload[cols_order].corrwith(
-                        pd.Series(predictions, index=df_upload.index)
-                    ).sort_values()
-                    colors = ['#e94560' if c < 0 else '#0f3460' for c in corr]
-                    corr.plot(kind='bar', ax=ax, color=colors, edgecolor='black')
-                    ax.set_title("Corrélation variables / prédiction")
-                    ax.set_ylabel("Corrélation")
-                    plt.xticks(rotation=90, fontsize=6)
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                    plt.close()
-
-                st.markdown("---")
-
-                # Graphique 3 : Matrice de confusion (si Class existe)
-                if 'Class' in df_upload.columns:
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.subheader("🎯 Matrice de Confusion")
-                        cm = confusion_matrix(df_upload['Class'], predictions)
-                        fig, ax = plt.subplots(figsize=(5, 4))
-                        sns.heatmap(cm, annot=True, fmt='d', ax=ax, cmap='Blues',
-                                    xticklabels=['Légitime', 'Fraude'],
-                                    yticklabels=['Légitime', 'Fraude'])
-                        ax.set_title("Matrice de Confusion")
-                        ax.set_ylabel("Réel")
-                        ax.set_xlabel("Prédit")
-                        st.pyplot(fig)
-                        plt.close()
-
-                    with col2:
-                        st.subheader("📉 Courbe ROC")
-                        fig, ax = plt.subplots(figsize=(5, 4))
-                        fpr, tpr, _ = roc_curve(df_upload['Class'], probas)
-                        roc_auc = auc(fpr, tpr)
-                        ax.plot(fpr, tpr, color='#0f3460', linewidth=2,
-                                label=f'Random Forest (AUC = {roc_auc:.4f})')
-                        ax.plot([0,1], [0,1], 'k--', linewidth=1, label='Aléatoire')
-                        ax.set_xlabel("FPR")
-                        ax.set_ylabel("TPR")
-                        ax.set_title("Courbe ROC")
-                        ax.legend()
-                        st.pyplot(fig)
-                        plt.close()
-
-                        f1 = f1_score(df_upload['Class'], predictions)
-                        st.metric("F1-score (fraude)", f"{f1:.4f}")
-
-                st.markdown("---")
-
-                # Tableau résultats
-                st.subheader("📋 Détail des transactions")
-                st.dataframe(
-                    df_result[['Time', 'Amount', 'Prédiction', 'Probabilité Fraude (%)']],
-                    use_container_width=True
-                )
+                st.dataframe(df_result[['Time', 'Amount', 'Prédiction', 'Probabilité Fraude (%)']],
+                             use_container_width=True)
 
                 csv_result = df_result.to_csv(index=False).encode('utf-8')
                 st.download_button("⬇️ Télécharger les résultats",
@@ -270,9 +127,6 @@ elif mode == "📁 Analyse CSV":
                                    file_name='resultats_fraude.csv',
                                    mime='text/csv')
 
-# ============================================================
-# PAGE SAISIE MANUELLE
-# ============================================================
 elif mode == "✍️ Saisie manuelle":
     st.subheader("✍️ Analyse d'une transaction")
 
@@ -296,23 +150,12 @@ elif mode == "✍️ Saisie manuelle":
         time_scaled = (time - 94813.0) / 47488.0
         features = np.array([[time_scaled] + v_values + [amount_scaled]])
 
-        prediction = model_rf.predict(features)[0]
-        proba = model_rf.predict_proba(features)[0]
+        prediction = model.predict(features)[0]
+        proba = model.predict_proba(features)[0]
 
         col1, col2 = st.columns(2)
         col1.metric("✅ Probabilité Légitime", f"{proba[0]*100:.2f}%")
         col2.metric("⚠️ Probabilité Fraude", f"{proba[1]*100:.2f}%")
-
-        fig, ax = plt.subplots(figsize=(8, 1.5))
-        ax.barh([''], [proba[0]*100], color='#0f3460', label='Légitime')
-        ax.barh([''], [proba[1]*100], left=[proba[0]*100],
-                color='#e94560', label='Fraude')
-        ax.set_xlim(0, 100)
-        ax.set_xlabel("Probabilité (%)")
-        ax.set_title("Répartition des probabilités")
-        ax.legend()
-        st.pyplot(fig)
-        plt.close()
 
         if prediction == 1:
             st.error("⚠️ TRANSACTION FRAUDULEUSE DÉTECTÉE !")
@@ -320,7 +163,5 @@ elif mode == "✍️ Saisie manuelle":
             st.success("✅ Transaction légitime")
 
 st.markdown("---")
-st.markdown(
-    "<center><small>Random Forest | Credit Card Fraud Detection | Université Saint Jean 2025-2026</small></center>",
-    unsafe_allow_html=True
-)
+st.markdown("<center><small>Random Forest | Credit Card Fraud Detection (Kaggle) | Université Saint Jean 2025-2026</small></center>",
+            unsafe_allow_html=True)
